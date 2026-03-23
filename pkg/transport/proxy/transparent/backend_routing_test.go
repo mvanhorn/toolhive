@@ -33,7 +33,9 @@ func startProxy(t *testing.T, targetURL string, opts ...Option) (proxy *Transpar
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(func() {
 		cancel()
-		_ = proxy.Stop(ctx)
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer stopCancel()
+		_ = proxy.Stop(stopCtx)
 	})
 	require.NoError(t, proxy.Start(ctx))
 	addr = proxy.listener.Addr().String()
@@ -46,8 +48,10 @@ func TestRewriteRoutesViaBackendURL(t *testing.T) {
 	t.Parallel()
 
 	var specificHit atomic.Bool
-	specificBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var specificPath atomic.Value
+	specificBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		specificHit.Store(true)
+		specificPath.Store(r.URL.Path)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer specificBackend.Close()
@@ -79,8 +83,9 @@ func TestRewriteRoutesViaBackendURL(t *testing.T) {
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 
-	assert.True(t, specificHit.Load(), "request should have been forwarded to specificBackend")
+	require.True(t, specificHit.Load(), "request should have been forwarded to specificBackend")
 	assert.False(t, defaultHit.Load(), "request should NOT have been forwarded to defaultBackend")
+	assert.Equal(t, "/mcp", specificPath.Load(), "original request path should be preserved after backend_url rewrite")
 }
 
 // TestRewriteFallsBackToStaticTargetWhenNoBackendURL verifies that a request

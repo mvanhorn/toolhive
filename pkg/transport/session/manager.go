@@ -32,6 +32,7 @@ type Session interface {
 	GetData() interface{}
 	SetData(data interface{})
 	GetMetadata() map[string]string
+	GetMetadataValue(key string) (string, bool)
 	SetMetadata(key, value string)
 }
 

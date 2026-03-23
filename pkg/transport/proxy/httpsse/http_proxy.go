@@ -96,6 +96,9 @@ type Option func(*HTTPSSEProxy)
 // When not provided, the proxy uses in-memory LocalStorage (single-replica default).
 func WithSessionStorage(storage session.Storage) Option {
 	return func(p *HTTPSSEProxy) {
+		if storage == nil {
+			return
+		}
 		if p.sessionManager != nil {
 			_ = p.sessionManager.Stop()
 		}

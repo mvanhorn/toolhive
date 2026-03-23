@@ -224,6 +224,9 @@ func withShutdownTimeout(timeout time.Duration) Option {
 // share the same session store.
 func WithSessionStorage(storage session.Storage) Option {
 	return func(p *TransparentProxy) {
+		if storage == nil {
+			return
+		}
 		if p.sessionManager != nil {
 			_ = p.sessionManager.Stop()
 		}
@@ -549,9 +552,10 @@ func (p *TransparentProxy) Start(ctx context.Context) error {
 			// Falls back to static targetURL when the session doesn't exist or has no backend_url.
 			if sid := pr.In.Header.Get("Mcp-Session-Id"); sid != "" {
 				if sess, ok := p.sessionManager.Get(normalizeSessionID(sid)); ok {
-					if backendURLStr := sess.GetMetadata()["backend_url"]; backendURLStr != "" {
+					if backendURLStr, exists := sess.GetMetadataValue("backend_url"); exists && backendURLStr != "" {
 						if parsed, err := url.Parse(backendURLStr); err == nil {
-							pr.Out.URL = parsed
+							pr.Out.URL.Scheme = parsed.Scheme
+							pr.Out.URL.Host = parsed.Host
 						} else {
 							slog.Debug("failed to parse backend_url from session metadata, using static target",
 								"backend_url", backendURLStr, "error", err)
