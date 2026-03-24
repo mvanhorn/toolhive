@@ -74,6 +74,13 @@ type HTTPSSEProxy struct {
 	// Session manager for SSE clients
 	sessionManager *session.Manager
 
+	// liveSSESessions tracks active SSE connections local to this instance.
+	// Keys are clientID strings; values are *session.SSESession.
+	// This is separate from sessionManager so that distributed storage backends
+	// (e.g. Redis) can be used for session metadata without breaking SSE fan-out,
+	// which must iterate live in-memory connections regardless of storage backend.
+	liveSSESessions sync.Map
+
 	// Pending messages for SSE clients
 	pendingMessages []*ssecommon.PendingSSEMessage
 	pendingMutex    sync.Mutex
@@ -94,6 +101,12 @@ type Option func(*HTTPSSEProxy)
 
 // WithSessionStorage injects a custom storage backend into the session manager.
 // When not provided, the proxy uses in-memory LocalStorage (single-replica default).
+// Provide a Redis-backed storage for multi-replica deployments so all replicas
+// share the same session store.
+//
+// Note: SSE fan-out (ForwardResponseToClients, sendSSEEvent) and graceful disconnect
+// use a separate in-memory liveSSESessions registry, not the session manager, so any
+// Storage implementation is safe to inject here.
 func WithSessionStorage(storage session.Storage) Option {
 	return func(p *HTTPSSEProxy) {
 		if storage == nil {
@@ -242,8 +255,8 @@ func (p *HTTPSSEProxy) Stop(ctx context.Context) error {
 		}
 	}
 
-	// Disconnect all active sessions
-	p.sessionManager.Range(func(_, value interface{}) bool {
+	// Disconnect all active SSE connections
+	p.liveSSESessions.Range(func(_, value interface{}) bool {
 		if sess, ok := value.(*session.SSESession); ok {
 			sess.Disconnect()
 		}
@@ -296,9 +309,9 @@ func (p *HTTPSSEProxy) ForwardResponseToClients(_ context.Context, msg jsonrpc2.
 	// Create an SSE message
 	sseMsg := ssecommon.NewSSEMessage("message", string(data))
 
-	// Check if there are any connected clients by checking session count
+	// Check if there are any connected clients
 	hasClients := false
-	p.sessionManager.Range(func(_, _ interface{}) bool {
+	p.liveSSESessions.Range(func(_, _ interface{}) bool {
 		hasClients = true
 		return false // Stop iteration after finding first session
 	})
@@ -343,6 +356,7 @@ func (p *HTTPSSEProxy) handleSSEConnection(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
+	p.liveSSESessions.Store(clientID, sseSession)
 
 	// Process any pending messages for this client
 	p.processPendingMessages(clientID, messageCh)
@@ -462,29 +476,26 @@ func (p *HTTPSSEProxy) sendSSEEvent(msg *ssecommon.SSEMessage) error {
 	// Convert the message to an SSE-formatted string
 	sseString := msg.ToSSEString()
 
-	// Iterate through all sessions and send to SSE sessions
-	p.sessionManager.Range(func(key, value interface{}) bool {
+	// Iterate through all live SSE connections and deliver the event
+	p.liveSSESessions.Range(func(key, value interface{}) bool {
 		clientID, ok := key.(string)
 		if !ok {
 			return true // Continue iteration
 		}
 
-		sess, ok := value.(session.Session)
+		sseSession, ok := value.(*session.SSESession)
 		if !ok {
 			return true // Continue iteration
 		}
 
-		// Check if this is an SSE session
-		if sseSession, ok := sess.(*session.SSESession); ok {
-			// Try to send the message
-			if err := sseSession.SendMessage(sseString); err != nil {
-				// Log the error but continue sending to other clients
-				switch {
-				case errors.Is(err, session.ErrSessionDisconnected):
-					slog.Debug("client is disconnected, skipping message", "client_id", clientID)
-				case errors.Is(err, session.ErrMessageChannelFull):
-					slog.Debug("client channel full, skipping message", "client_id", clientID)
-				}
+		// Try to send the message
+		if err := sseSession.SendMessage(sseString); err != nil {
+			// Log the error but continue sending to other clients
+			switch {
+			case errors.Is(err, session.ErrSessionDisconnected):
+				slog.Debug("client is disconnected, skipping message", "client_id", clientID)
+			case errors.Is(err, session.ErrMessageChannelFull):
+				slog.Debug("client channel full, skipping message", "client_id", clientID)
 			}
 		}
 
@@ -515,6 +526,9 @@ func (p *HTTPSSEProxy) removeClient(clientID string) {
 	if sseSession, ok := sess.(*session.SSESession); ok {
 		sseSession.Disconnect()
 	}
+
+	// Remove from local live-connection registry
+	p.liveSSESessions.Delete(clientID)
 
 	// Remove the session from the manager
 	if err := p.sessionManager.Delete(clientID); err != nil {

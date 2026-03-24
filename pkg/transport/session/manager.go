@@ -252,22 +252,6 @@ func (m *Manager) Stop() error {
 	return nil
 }
 
-// Range calls f sequentially for each key and value present in the map.
-// If f returns false, range stops the iteration.
-//
-// Note: This method only works with LocalStorage backend. It will silently
-// do nothing with other storage backends. Range is not part of the Storage
-// interface because it's not feasible for distributed storage backends like
-// Redis where iterating all keys can be prohibitively expensive or impractical.
-//
-// For distributed storage, consider using more targeted queries or maintaining
-// a separate index of session IDs.
-func (m *Manager) Range(f func(key, value interface{}) bool) {
-	if localStorage, ok := m.storage.(*LocalStorage); ok {
-		localStorage.Range(f)
-	}
-}
-
 // Count returns the number of active sessions.
 //
 // Note: This method only works with LocalStorage backend and returns 0 for

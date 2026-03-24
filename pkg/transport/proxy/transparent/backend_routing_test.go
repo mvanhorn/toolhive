@@ -68,7 +68,7 @@ func TestRewriteRoutesViaBackendURL(t *testing.T) {
 	// Pre-populate a session with backend_url pointing to specificBackend
 	sessionID := uuid.New().String()
 	sess := session.NewProxySession(sessionID)
-	sess.SetMetadata("backend_url", specificBackend.URL)
+	sess.SetMetadata(sessionMetadataBackendURL, specificBackend.URL)
 	require.NoError(t, proxy.sessionManager.AddSession(sess))
 
 	ctx := context.Background()
@@ -210,5 +210,7 @@ func TestRoundTripStoresBackendURLOnInitialize(t *testing.T) {
 
 	sess, ok := proxy.sessionManager.Get(normalizeSessionID(sessionID))
 	require.True(t, ok, "session should have been created by RoundTrip")
-	assert.Equal(t, backend.URL, sess.GetMetadata()["backend_url"])
+	backendURL, ok := sess.GetMetadataValue(sessionMetadataBackendURL)
+	require.True(t, ok, "session should have backend_url metadata")
+	assert.Equal(t, backend.URL, backendURL)
 }

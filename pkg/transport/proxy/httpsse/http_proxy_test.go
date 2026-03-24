@@ -193,10 +193,11 @@ func TestForwardResponseToClients(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 
-	// Add session to manager
+	// Add session to manager and live-connection registry
 	sseSession := session.NewSSESessionWithClient(clientID, clientInfo)
 	err := proxy.sessionManager.AddSession(sseSession)
 	require.NoError(t, err)
+	proxy.liveSSESessions.Store(clientID, sseSession)
 
 	// Create a test response
 	response, err := jsonrpc2.NewResponse(jsonrpc2.StringID("test"), "test result", nil)
@@ -251,10 +252,11 @@ func TestSendSSEEvent_ChannelFull(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 
-	// Add session to manager
+	// Add session to manager and live-connection registry
 	sseSession := session.NewSSESessionWithClient(clientID, clientInfo)
 	err := proxy.sessionManager.AddSession(sseSession)
 	require.NoError(t, err)
+	proxy.liveSSESessions.Store(clientID, sseSession)
 
 	// Fill the channel
 	messageCh <- "blocking message"

@@ -148,6 +148,11 @@ const (
 	// HealthCheckIntervalEnvVar is the environment variable name for configuring health check interval.
 	// This is primarily useful for testing with shorter intervals.
 	HealthCheckIntervalEnvVar = "TOOLHIVE_HEALTH_CHECK_INTERVAL"
+
+	// sessionMetadataBackendURL is the session metadata key that stores the backend pod URL.
+	// It is written on initialize and read in the Rewrite closure to route follow-up requests
+	// to the same backend pod that handled the session's initialize request.
+	sessionMetadataBackendURL = "backend_url"
 )
 
 // Option is a functional option for configuring TransparentProxy
@@ -468,7 +473,14 @@ func (t *tracingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 			internalID := normalizeSessionID(ct)
 			if _, ok := t.p.sessionManager.Get(internalID); !ok {
 				sess := session.NewProxySession(internalID)
-				sess.SetMetadata("backend_url", t.p.targetURI)
+				// Store targetURI as the default backend_url for this session.
+				// In single-replica deployments targetURI is already the pod address,
+				// so no override is needed. In multi-replica deployments the
+				// vMCP/operator layer is responsible for setting backend_url to the
+				// actual pod DNS name (e.g. http://mcp-server-0.mcp-server.default.svc:8080)
+				// before the request reaches this proxy; the Rewrite closure then reads
+				// that value and routes follow-up requests to the correct pod.
+				sess.SetMetadata(sessionMetadataBackendURL, t.p.targetURI)
 				if err := t.p.sessionManager.AddSession(sess); err != nil {
 					//nolint:gosec // G706: session ID from HTTP response header
 					slog.Error("failed to create session from header",
@@ -552,13 +564,13 @@ func (p *TransparentProxy) Start(ctx context.Context) error {
 			// Falls back to static targetURL when the session doesn't exist or has no backend_url.
 			if sid := pr.In.Header.Get("Mcp-Session-Id"); sid != "" {
 				if sess, ok := p.sessionManager.Get(normalizeSessionID(sid)); ok {
-					if backendURLStr, exists := sess.GetMetadataValue("backend_url"); exists && backendURLStr != "" {
+					if backendURLStr, exists := sess.GetMetadataValue(sessionMetadataBackendURL); exists && backendURLStr != "" {
 						if parsed, err := url.Parse(backendURLStr); err == nil {
 							pr.Out.URL.Scheme = parsed.Scheme
 							pr.Out.URL.Host = parsed.Host
 						} else {
 							slog.Debug("failed to parse backend_url from session metadata, using static target",
-								"backend_url", backendURLStr, "error", err)
+								sessionMetadataBackendURL, backendURLStr, "error", err)
 						}
 					}
 				}
