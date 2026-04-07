@@ -770,7 +770,7 @@ func CreateMCPServerAndWait(
 			Image:     image,
 			Transport: "streamable-http",
 			ProxyPort: 8080,
-			McpPort:   8080,
+			MCPPort:   8080,
 			Resources: defaultMCPServerResources(),
 			Env: []mcpv1alpha1.EnvVar{
 				{Name: "TRANSPORT", Value: "streamable-http"},
@@ -860,7 +860,7 @@ func CreateMultipleMCPServersInParallel(
 				Image:                 backends[idx].Image,
 				Transport:             backendTransport,
 				ProxyPort:             8080,
-				McpPort:               8080,
+				MCPPort:               8080,
 				ExternalAuthConfigRef: backends[idx].ExternalAuthConfigRef,
 				Secrets:               backends[idx].Secrets,
 				Resources:             resources,
